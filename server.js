@@ -26,7 +26,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // CORS - Allow frontend on port 3000
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: process.env.CLIENT_URL || 'http://localhost:3000'|| 'https://zappy-frontend-git-main-shivendra-11s-projects.vercel.app',
   credentials: true
 }));
 
