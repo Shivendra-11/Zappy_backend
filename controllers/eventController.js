@@ -2,6 +2,32 @@ import Event from '../models/Event.js';
 import { cloudinary } from '../config/cloudinary.js';
 import { generateOTP, sendOTP } from '../utils/otpService.js';
 
+const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+const ensureNotDeleted = (event, res) => {
+  if (event?.isDeleted) {
+    res.status(410).json({
+      success: false,
+      message: 'This event was deleted'
+    });
+    return false;
+  }
+  return true;
+};
+
+const sanitizeEvent = (eventDoc) => {
+  const eventObj = eventDoc.toObject();
+  ['startOTP', 'closingOTP'].forEach((key) => {
+    if (eventObj[key]) {
+      eventObj[key] = {
+        ...eventObj[key],
+        code: process.env.NODE_ENV === 'development' ? eventObj[key].code : undefined
+      };
+    }
+  });
+  return eventObj;
+};
+
 // @desc    Create a new event
 // @route   POST /api/events
 // @access  Private
@@ -42,9 +68,11 @@ export const createEvent = async (req, res) => {
 
     await event.populate('vendor', 'name email phone');
 
+    const sanitizedEvent = sanitizeEvent(event);
+
     res.status(201).json({
       success: true,
-      event
+      event: sanitizedEvent
     });
   } catch (error) {
     if (error?.name === 'ValidationError') {
@@ -65,14 +93,26 @@ export const createEvent = async (req, res) => {
 // @access  Private
 export const getEvents = async (req, res) => {
   try {
-    const events = await Event.find({ vendor: req.vendor._id })
+    const includeDeleted = String(req.query.includeDeleted || '').toLowerCase() === 'true';
+    const onlyDeleted = String(req.query.onlyDeleted || '').toLowerCase() === 'true';
+
+    const filter = { vendor: req.vendor._id };
+    if (onlyDeleted) {
+      filter.isDeleted = true;
+    } else if (!includeDeleted) {
+      filter.isDeleted = { $ne: true };
+    }
+
+    const events = await Event.find(filter)
       .populate('vendor', 'name email phone')
       .sort({ createdAt: -1 });
 
+    const sanitizedEvents = events.map(sanitizeEvent);
+
     res.status(200).json({
       success: true,
-      count: events.length,
-      events
+      count: sanitizedEvents.length,
+      events: sanitizedEvents
     });
   } catch (error) {
     res.status(500).json({
@@ -84,6 +124,7 @@ export const getEvents = async (req, res) => {
 
 export const getEvent = async (req, res) => {
   try {
+    const includeDeleted = String(req.query.includeDeleted || '').toLowerCase() === 'true';
     const event = await Event.findById(req.params.id)
       .populate('vendor', 'name email phone');
 
@@ -102,9 +143,18 @@ export const getEvent = async (req, res) => {
       });
     }
 
+    if (event.isDeleted && !includeDeleted) {
+      return res.status(410).json({
+        success: false,
+        message: 'This event was deleted'
+      });
+    }
+
+    const sanitizedEvent = sanitizeEvent(event);
+
     res.status(200).json({
       success: true,
-      event
+      event: sanitizedEvent
     });
   } catch (error) {
     res.status(500).json({
@@ -151,6 +201,8 @@ export const checkIn = async (req, res) => {
       });
     }
 
+    if (!ensureNotDeleted(event, res)) return;
+
     // Upload image to cloudinary
     const result = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
@@ -181,10 +233,12 @@ export const checkIn = async (req, res) => {
 
     await event.save();
 
+    const sanitizedEvent = sanitizeEvent(event);
+
     res.status(200).json({
       success: true,
       message: 'Check-in successful',
-      event
+      event: sanitizedEvent
     });
   } catch (error) {
     if (typeof error?.message === 'string' && error.message.includes('Invalid Signature')) {
@@ -221,7 +275,9 @@ export const triggerStartOTP = async (req, res) => {
       });
     }
 
-    if (!event.checkIn.isCheckedIn) {
+    if (!ensureNotDeleted(event, res)) return;
+
+    if (!event.checkIn?.isCheckedIn) {
       return res.status(400).json({
         success: false,
         message: 'Please check-in first'
@@ -231,8 +287,13 @@ export const triggerStartOTP = async (req, res) => {
     // Generate OTP
     const otp = generateOTP();
 
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[OTP] Start OTP generated for event ${event._id} -> ${event.customerEmail}: ${otp}`);
+    }
+
     // Send OTP to customer
-    await sendOTP(event.customerPhone, event.customerEmail, otp);
+    const toEmail = typeof event.customerEmail === 'string' ? event.customerEmail.trim() : '';
+    await sendOTP(event.customerPhone, toEmail, otp);
 
     // Save OTP to event
     event.startOTP = {
@@ -243,10 +304,12 @@ export const triggerStartOTP = async (req, res) => {
 
     await event.save();
 
+    const responseEvent = sanitizeEvent(event);
+
     res.status(200).json({
       success: true,
       message: 'OTP sent to customer successfully',
-      event,
+      event: responseEvent,
       // In development, return OTP for testing
       otp: process.env.NODE_ENV === 'development' ? otp : undefined
     });
@@ -281,6 +344,23 @@ export const verifyStartOTP = async (req, res) => {
       });
     }
 
+    if (!ensureNotDeleted(event, res)) return;
+
+    if (!event.startOTP?.code) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has not been requested yet'
+      });
+    }
+
+    const isExpired = event.startOTP.sentAt && (Date.now() - new Date(event.startOTP.sentAt).getTime() > OTP_TTL_MS);
+    if (isExpired) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new one.'
+      });
+    }
+
     if (event.startOTP.code !== otp) {
       return res.status(400).json({
         success: false,
@@ -295,10 +375,12 @@ export const verifyStartOTP = async (req, res) => {
 
     await event.save();
 
+    const responseEvent = sanitizeEvent(event);
+
     res.status(200).json({
       success: true,
       message: 'Event started successfully',
-      event
+      event: responseEvent
     });
   } catch (error) {
     res.status(500).json({
@@ -345,11 +427,24 @@ export const uploadSetupPhotos = async (req, res) => {
       });
     }
 
-    if (!event.startOTP.isVerified) {
+    if (!ensureNotDeleted(event, res)) return;
+
+    if (!event.startOTP?.isVerified) {
       return res.status(400).json({
         success: false,
         message: 'Please verify start OTP first'
       });
+    }
+
+    // Ensure nested structure exists (for older records created before defaults)
+    if (!event.eventSetup) {
+      event.eventSetup = { preSetupPhotos: [], postSetupPhotos: [] };
+    }
+    if (!Array.isArray(event.eventSetup.preSetupPhotos)) {
+      event.eventSetup.preSetupPhotos = [];
+    }
+    if (!Array.isArray(event.eventSetup.postSetupPhotos)) {
+      event.eventSetup.postSetupPhotos = [];
     }
 
     // Upload all photos to cloudinary
@@ -390,10 +485,12 @@ export const uploadSetupPhotos = async (req, res) => {
 
     await event.save();
 
+    const sanitizedEvent = sanitizeEvent(event);
+
     res.status(200).json({
       success: true,
       message: `${type}-setup photos uploaded successfully`,
-      event
+      event: sanitizedEvent
     });
   } catch (error) {
     if (typeof error?.message === 'string' && error.message.includes('Invalid Signature')) {
@@ -430,7 +527,9 @@ export const triggerClosingOTP = async (req, res) => {
       });
     }
 
-    if (event.eventSetup.postSetupPhotos.length === 0) {
+    if (!ensureNotDeleted(event, res)) return;
+
+    if (!event.eventSetup?.postSetupPhotos || event.eventSetup.postSetupPhotos.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Please upload post-setup photos first'
@@ -440,8 +539,13 @@ export const triggerClosingOTP = async (req, res) => {
     // Generate OTP
     const otp = generateOTP();
 
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[OTP] Closing OTP generated for event ${event._id} -> ${event.customerEmail}: ${otp}`);
+    }
+
     // Send OTP to customer
-    await sendOTP(event.customerPhone, event.customerEmail, otp);
+    const toEmail = typeof event.customerEmail === 'string' ? event.customerEmail.trim() : '';
+    await sendOTP(event.customerPhone, toEmail, otp);
 
     // Save OTP to event
     event.closingOTP = {
@@ -452,10 +556,12 @@ export const triggerClosingOTP = async (req, res) => {
 
     await event.save();
 
+    const responseEvent = sanitizeEvent(event);
+
     res.status(200).json({
       success: true,
       message: 'Closing OTP sent to customer successfully',
-      event,
+      event: responseEvent,
       // In development, return OTP for testing
       otp: process.env.NODE_ENV === 'development' ? otp : undefined
     });
@@ -490,6 +596,23 @@ export const verifyClosingOTP = async (req, res) => {
       });
     }
 
+    if (!ensureNotDeleted(event, res)) return;
+
+    if (!event.closingOTP?.code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Closing OTP has not been requested yet'
+      });
+    }
+
+    const isExpired = event.closingOTP.sentAt && (Date.now() - new Date(event.closingOTP.sentAt).getTime() > OTP_TTL_MS);
+    if (isExpired) {
+      return res.status(400).json({
+        success: false,
+        message: 'Closing OTP has expired. Please request a new one.'
+      });
+    }
+
     if (event.closingOTP.code !== otp) {
       return res.status(400).json({
         success: false,
@@ -505,10 +628,12 @@ export const verifyClosingOTP = async (req, res) => {
 
     await event.save();
 
+    const responseEvent = sanitizeEvent(event);
+
     res.status(200).json({
       success: true,
       message: 'Event completed successfully',
-      event
+      event: responseEvent
     });
   } catch (error) {
     res.status(500).json({
@@ -539,11 +664,90 @@ export const deleteEvent = async (req, res) => {
       });
     }
 
-    await event.deleteOne();
+    if (event.isDeleted) {
+      return res.status(200).json({
+        success: true,
+        message: 'Event already deleted'
+      });
+    }
+
+    event.isDeleted = true;
+    event.deletedAt = new Date();
+    await event.save();
 
     res.status(200).json({
       success: true,
-      message: 'Event deleted'
+      message: 'Event moved to deleted list'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Get analytics summary for vendor events
+// @route   GET /api/events/analytics
+// @access  Private
+export const getEventAnalytics = async (req, res) => {
+  try {
+    const vendorId = req.vendor._id;
+
+    const [
+      totalAll,
+      totalDeleted,
+      totalActive,
+      statusCounts,
+      completedEvents
+    ] = await Promise.all([
+      Event.countDocuments({ vendor: vendorId }),
+      Event.countDocuments({ vendor: vendorId, isDeleted: true }),
+      Event.countDocuments({ vendor: vendorId, isDeleted: { $ne: true } }),
+      Event.aggregate([
+        { $match: { vendor: vendorId, isDeleted: { $ne: true } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      Event.find({ vendor: vendorId, status: 'completed' }).select('checkIn.timestamp startOTP.verifiedAt closingOTP.verifiedAt completedAt').lean()
+    ]);
+
+    const ms = (d) => (d ? new Date(d).getTime() : null);
+    const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null);
+
+    const checkInToCompleted = [];
+    const checkInToStarted = [];
+    const startedToCompleted = [];
+
+    for (const ev of completedEvents) {
+      const checkInAt = ms(ev?.checkIn?.timestamp);
+      const startedAt = ms(ev?.startOTP?.verifiedAt);
+      const closedAt = ms(ev?.closingOTP?.verifiedAt) || ms(ev?.completedAt);
+
+      if (checkInAt && closedAt && closedAt >= checkInAt) checkInToCompleted.push(closedAt - checkInAt);
+      if (checkInAt && startedAt && startedAt >= checkInAt) checkInToStarted.push(startedAt - checkInAt);
+      if (startedAt && closedAt && closedAt >= startedAt) startedToCompleted.push(closedAt - startedAt);
+    }
+
+    const statusMap = statusCounts.reduce((acc, row) => {
+      acc[row._id] = row.count;
+      return acc;
+    }, {});
+
+    res.status(200).json({
+      success: true,
+      analytics: {
+        totals: {
+          all: totalAll,
+          active: totalActive,
+          deleted: totalDeleted
+        },
+        statusCounts: statusMap,
+        avgDurationsMs: {
+          checkInToStarted: avg(checkInToStarted),
+          startedToCompleted: avg(startedToCompleted),
+          checkInToCompleted: avg(checkInToCompleted)
+        }
+      }
     });
   } catch (error) {
     res.status(500).json({

@@ -1,5 +1,60 @@
 import mongoose from 'mongoose';
 
+const otpSchema = new mongoose.Schema(
+  {
+    code: String,
+    sentAt: Date,
+    verifiedAt: Date,
+    isVerified: {
+      type: Boolean,
+      default: false
+    }
+  },
+  { _id: false }
+);
+
+const checkInSchema = new mongoose.Schema(
+  {
+    arrivalPhoto: String,
+    arrivalPhotoPublicId: String,
+    location: {
+      latitude: Number,
+      longitude: Number
+    },
+    timestamp: Date,
+    isCheckedIn: {
+      type: Boolean,
+      default: false
+    }
+  },
+  { _id: false }
+);
+
+const setupPhotoSchema = new mongoose.Schema(
+  {
+    url: String,
+    publicId: String,
+    uploadedAt: Date
+  },
+  { _id: false }
+);
+
+const eventSetupSchema = new mongoose.Schema(
+  {
+    preSetupPhotos: {
+      type: [setupPhotoSchema],
+      default: []
+    },
+    postSetupPhotos: {
+      type: [setupPhotoSchema],
+      default: []
+    },
+    notes: String,
+    setupCompletedAt: Date
+  },
+  { _id: false }
+);
+
 const eventSchema = new mongoose.Schema({
   vendor: {
     type: mongoose.Schema.Types.ObjectId,
@@ -39,55 +94,26 @@ const eventSchema = new mongoose.Schema({
   
   // Vendor Check-In Data
   checkIn: {
-    arrivalPhoto: String,
-    arrivalPhotoPublicId: String,
-    location: {
-      latitude: Number,
-      longitude: Number
-    },
-    timestamp: Date,
-    isCheckedIn: {
-      type: Boolean,
-      default: false
-    }
+    type: checkInSchema,
+    default: () => ({})
   },
   
   // Customer OTP for Event Start
   startOTP: {
-    code: String,
-    sentAt: Date,
-    verifiedAt: Date,
-    isVerified: {
-      type: Boolean,
-      default: false
-    }
+    type: otpSchema,
+    default: () => ({})
   },
   
   // Event Setup Progress
   eventSetup: {
-    preSetupPhotos: [{
-      url: String,
-      publicId: String,
-      uploadedAt: Date
-    }],
-    postSetupPhotos: [{
-      url: String,
-      publicId: String,
-      uploadedAt: Date
-    }],
-    notes: String,
-    setupCompletedAt: Date
+    type: eventSetupSchema,
+    default: () => ({})
   },
   
   // Event Closing Confirmation
   closingOTP: {
-    code: String,
-    sentAt: Date,
-    verifiedAt: Date,
-    isVerified: {
-      type: Boolean,
-      default: false
-    }
+    type: otpSchema,
+    default: () => ({})
   },
   
   status: {
@@ -95,6 +121,13 @@ const eventSchema = new mongoose.Schema({
     enum: ['pending', 'checked-in', 'started', 'in-progress', 'completed', 'cancelled'],
     default: 'pending'
   },
+
+  isDeleted: {
+    type: Boolean,
+    default: false
+  },
+
+  deletedAt: Date,
   
   completedAt: Date
 }, {

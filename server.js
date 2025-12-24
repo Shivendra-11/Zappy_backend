@@ -24,27 +24,37 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS - Allow frontend on port 3000
-const allowedOrigins = [
-  'http://localhost:3000',
-  'https://zappy-frontend-git-main-shivendra-11s-projects.vercel.app',
-  process.env.CLIENT_URL
-].filter(Boolean); // Remove any undefined values
-
+// CORS Configuration
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, Postman, or curl)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
+    // List of allowed origins
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://localhost:5174',
+      process.env.CLIENT_URL
+    ].filter(Boolean);
+    
+    // Check if origin is in allowed list OR is a Vercel deployment
+    const isAllowed = allowedOrigins.includes(origin) || 
+                      origin.endsWith('.vercel.app') ||
+                      origin.endsWith('.vercel.app/');
+    
+    if (isAllowed) {
+      return callback(null, true);
+    } else {
+      console.log('Blocked origin:', origin);
+      return callback(new Error('Not allowed by CORS'), false);
     }
-    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'X-Request-Id'],
+  maxAge: 86400 // 24 hours
 }));
 
 // Routes
