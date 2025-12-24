@@ -244,7 +244,7 @@ export const checkIn = async (req, res) => {
     if (typeof error?.message === 'string' && error.message.includes('Invalid Signature')) {
       return res.status(500).json({
         success: false,
-        message: 'Cloudinary upload failed (invalid signature). Your CLOUDINARY_API_SECRET (or API key/cloud name) is incorrect. Update backend/.env with the exact values from your Cloudinary Dashboard and restart the backend.'
+        message: 'Cloudinary upload failed to  (invalid signature). Your CLOUDINARY_API_SECRET (or API key/cloud name) is incorrect. Update backend/.env with the exact values from your Cloudinary Dashboard and restart the backend.'
       });
     }
     res.status(500).json({
