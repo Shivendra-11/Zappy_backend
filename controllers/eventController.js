@@ -4,16 +4,6 @@ import { generateOTP, sendOTP } from '../utils/otpService.js';
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-const isCloudinaryInvalidSignature = (error) => {
-  const messageParts = [
-    error?.message,
-    error?.error?.message,
-    error?.response?.data?.error?.message
-  ].filter(Boolean);
-  const msg = messageParts.join(' ');
-  return /Invalid Signature/i.test(msg);
-};
-
 const ensureNotDeleted = (event, res) => {
   if (event?.isDeleted) {
     res.status(410).json({
@@ -251,7 +241,7 @@ export const checkIn = async (req, res) => {
       event: sanitizedEvent
     });
   } catch (error) {
-    if (isCloudinaryInvalidSignature(error)) {
+    if (typeof error?.message === 'string' && error.message.includes('Invalid Signature')) {
       return res.status(500).json({
         success: false,
         message: 'Cloudinary upload failed (invalid signature). Your CLOUDINARY_API_SECRET (or API key/cloud name) is incorrect. Update backend/.env with the exact values from your Cloudinary Dashboard and restart the backend.'
@@ -503,7 +493,7 @@ export const uploadSetupPhotos = async (req, res) => {
       event: sanitizedEvent
     });
   } catch (error) {
-    if (isCloudinaryInvalidSignature(error)) {
+    if (typeof error?.message === 'string' && error.message.includes('Invalid Signature')) {
       return res.status(500).json({
         success: false,
         message: 'Cloudinary upload failed (invalid signature). Your CLOUDINARY_API_SECRET (or API key/cloud name) is incorrect. Update backend/.env with the exact values from your Cloudinary Dashboard and restart the backend.'
