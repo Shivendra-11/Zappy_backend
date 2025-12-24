@@ -1,202 +1,129 @@
-# Zappy Backend - Vendor Event Day Tracker API
+# Zappy Backend (Vendor Event Day Tracker API)
 
-Backend API for the Vendor Event Day Tracker application built with Node.js, Express, and MongoDB.
+Node/Express API for the Zappy Vendor Event Day Tracker.
 
-## 🛠️ Technologies
+## Tech Stack
 
-- **Node.js** v14+
-- **Express.js** - Web framework
-- **MongoDB** - Database
-- **Mongoose** - ODM
-- **JWT** - Authentication
-- **Cloudinary** - Image storage
-- **Multer** - File uploads
-- **bcryptjs** - Password hashing
-- **dotenv** - Environment variables
-- **cors** - Cross-origin requests
+- Node.js + Express
+- MongoDB + Mongoose
+- JWT auth
+- Multer (uploads) + Cloudinary (image storage)
+- Nodemailer (OTP emails)
 
-## 📦 Installation
+## Requirements
+
+- Node.js 18+ (recommended)
+- MongoDB (local or Atlas)
+- Cloudinary account (required for image uploads)
+- SMTP credentials (required for OTP endpoints)
+
+## Setup
+
+### 1) Install
 
 ```bash
-cd backend
+cd Zappy_backend
 npm install
 ```
 
-## ⚙️ Configuration
+### 2) Configure environment variables
 
-Create/update `.env` file:
+Create `Zappy_backend/.env`:
 
 ```env
-# Database
-MONGODB_URI=mongodb+srv://shivendrakeshari11_db_user:i4MH79sjLVnaz0VU@cluster0.wkob5in.mongodb.net/
-
-# Authentication
-JWT_SECRET=zappy_secret_key_2024_vendor_tracker
-
 # Server
 PORT=5000
+NODE_ENV=development
 
-# Cloudinary (Get from cloudinary.com dashboard)
+# CORS (optional)
+# Used in server.js in addition to localhost allowlist
+CLIENT_URL=http://localhost:3000
+
+# Database
+MONGODB_URI=mongodb://127.0.0.1:27017/zappy
+
+# Auth
+JWT_SECRET=replace_me_with_a_long_random_secret
+JWT_EXPIRE=30d
+
+# Cloudinary (required for uploads)
 CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
+
+# SMTP (required for OTP emails)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=your_email@gmail.com
+SMTP_PASS=your_app_password
+SMTP_FROM=Zappy <your_email@gmail.com>
+
+# Optional debugging
+SMTP_DEBUG=false
 ```
 
-## 🚀 Running the Server
+Notes:
 
-### Development Mode (with nodemon)
+- OTP endpoints send emails via SMTP. In `NODE_ENV=development`, the API also returns the generated OTP in the JSON response for easier local testing.
+- If Cloudinary vars are missing, check-in/setup uploads will fail with a clear error message.
+
+### 3) Run
+
 ```bash
 npm run dev
 ```
 
-### Production Mode
-```bash
-npm start
-```
+API runs at `http://localhost:5000`.
 
-Server will run on `http://localhost:5000`
+## API
 
-## 📡 API Documentation
+Base URL: `http://localhost:5000/api`
 
-### Base URL
-```
-http://localhost:5000/api
-```
+### Health
 
-### Authentication Endpoints
+- `GET /health`
 
-#### 1. Register Vendor
-```http
-POST /auth/register
-Content-Type: application/json
+### Auth
 
-{
-  "name": "John Doe",
-  "email": "john@example.com",
-  "phone": "1234567890",
-  "password": "password123"
-}
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /auth/me` (requires `Authorization: Bearer <token>`)
 
-Response: {
-  "token": "jwt_token",
-  "vendor": { ... }
-}
-```
+### Events (all require `Authorization: Bearer <token>`)
 
-#### 2. Login Vendor
-```http
-POST /auth/login
-Content-Type: application/json
+- `GET /events` (query: `includeDeleted=true` or `onlyDeleted=true`)
+- `GET /events/:id` (query: `includeDeleted=true` to view soft-deleted records)
+- `POST /events`
+- `DELETE /events/:id` (soft delete)
+- `GET /events/analytics`
 
-{
-  "email": "john@example.com",
-  "password": "password123"
-}
+#### Vendor check-in
 
-Response: {
-  "token": "jwt_token",
-  "vendor": { ... }
-}
-```
+- `POST /events/:id/checkin` (multipart/form-data)
+  - `arrivalPhoto`: image file
+  - `latitude`: number (string is ok)
+  - `longitude`: number (string is ok)
 
-#### 3. Get Current Vendor
-```http
-GET /auth/me
-Authorization: Bearer <jwt_token>
+#### Setup photos
 
-Response: {
-  "vendor": { ... }
-}
-```
+- `POST /events/:id/setup-photos` (multipart/form-data)
+  - `photos`: 1..10 image files
+  - `type`: `pre` or `post`
+  - `notes`: optional string
 
-### Event Endpoints
+#### OTP workflow
 
-All event endpoints require authentication header:
-```
-Authorization: Bearer <jwt_token>
-```
+- `POST /events/:id/start-otp` (requires check-in completed)
+- `POST /events/:id/verify-start-otp` with JSON `{ "otp": "123456" }`
+- `POST /events/:id/closing-otp` (requires post-setup photos uploaded)
+- `POST /events/:id/verify-closing-otp` with JSON `{ "otp": "123456" }`
 
-#### 1. Create Event
-```http
-POST /events
-Content-Type: application/json
+## Troubleshooting
 
-{
-  "eventName": "Wedding Reception",
-  "eventDate": "2024-12-25",
-  "location": "Grand Hotel",
-  "customerName": "Jane Smith",
-  "customerEmail": "jane@example.com",
-  "customerPhone": "9876543210"
-}
-
-Response: {
-  "event": { ... }
-}
-```
-
-#### 2. Get All Events
-```http
-GET /events
-
-Response: {
-  "events": [ ... ]
-}
-```
-
-#### 3. Get Event by ID
-```http
-GET /events/:id
-
-Response: {
-  "event": { ... }
-}
-```
-
-#### 4. Vendor Check-In
-```http
-POST /events/:id/checkin
-Content-Type: multipart/form-data
-
-FormData:
-- photo: File
-- latitude: Number
-- longitude: Number
-
-Response: {
-  "event": { ... }
-}
-```
-
-#### 5. Trigger Start OTP
-```http
-POST /events/:id/start-otp
-
-Response: {
-  "message": "Start OTP sent",
-  "otp": "123456" // For development only
-}
-```
-
-#### 6. Verify Start OTP
-```http
-POST /events/:id/verify-start-otp
-Content-Type: application/json
-
-{
-  "otp": "123456"
-}
-
-Response: {
-  "message": "Event started",
-  "event": { ... }
-}
-```
-
-#### 7. Upload Setup Photos
-```http
-POST /events/:id/setup-photos
-Content-Type: multipart/form-data
+- **CORS blocked**: frontend should run on `http://localhost:3000`. If you use a different origin, set `CLIENT_URL` and restart the backend.
+- **OTP fails**: ensure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` are set. (Gmail typically needs an App Password.)
+- **Uploads fail**: ensure Cloudinary env vars are correct. “Invalid Signature” usually means the API secret is wrong.
 
 FormData:
 - photos: File[] (multiple files)
@@ -382,25 +309,6 @@ Current implementation is for **development/testing only**:
 - Logs to console
 - Returns OTP in response
 
-**Production Implementation** (TODO):
-```javascript
-// Use Twilio for SMS
-const twilio = require('twilio')
-await client.messages.create({
-  body: `Your OTP: ${otp}`,
-  to: customerPhone,
-  from: process.env.TWILIO_PHONE
-})
-
-// Use SendGrid for Email
-const sgMail = require('@sendgrid/mail')
-await sgMail.send({
-  to: customerEmail,
-  subject: 'Your OTP',
-  text: `Your OTP: ${otp}`
-})
-```
-
 ## 🚀 Deployment
 
 ### Environment Variables for Production
@@ -410,13 +318,6 @@ await sgMail.send({
 - Set appropriate CORS origins
 - Enable rate limiting
 - Add request logging
-
-### Recommended Platforms
-- **Heroku**
-- **Railway**
-- **Render**
-- **AWS EC2**
-- **DigitalOcean**
 
 ## 📦 Dependencies
 
@@ -443,14 +344,7 @@ await sgMail.send({
 5. Test endpoints with frontend or Postman
 6. Check console logs for OTP values
 
-## 📞 Support
-
-For issues or questions about the backend API, check:
-- Console logs for errors
-- MongoDB Atlas connection status
-- Cloudinary dashboard for upload status
-- JWT token expiration (24 hours)
+#Completed
 
 ---
 
-Built with ❤️ for Zappy FullStack Internship Assessment
