@@ -32,10 +32,10 @@ app.use(cors({
     
     // List of allowed origins
     const allowedOrigins = [
+      process.env.CLIENT_URL,
       'http://localhost:3000',
       'http://localhost:5173',
       'http://localhost:5174',
-      process.env.CLIENT_URL
     ].filter(Boolean);
     
     // Check if origin is in allowed list OR is a Vercel deployment
