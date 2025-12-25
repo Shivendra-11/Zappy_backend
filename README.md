@@ -53,11 +53,18 @@ CLOUDINARY_API_SECRET=your_api_secret
 
 # SMTP (required for OTP emails)
 SMTP_HOST=smtp.gmail.com
-SMTP_PORT=465
-SMTP_SECURE=true
+# For cloud hosting (Render, etc.) port 587 (STARTTLS) is usually the safest choice.
+# Port 25 is commonly blocked; 465 may be blocked by some hosts.
+SMTP_PORT=587
+SMTP_SECURE=false
 SMTP_USER=your_email@gmail.com
 SMTP_PASS=your_app_password
 SMTP_FROM=Zappy <your_email@gmail.com>
+
+# Optional SMTP timeouts (ms) to fail fast if ports are blocked
+SMTP_CONNECTION_TIMEOUT_MS=15000
+SMTP_GREETING_TIMEOUT_MS=15000
+SMTP_SOCKET_TIMEOUT_MS=20000
 
 # Optional debugging
 SMTP_DEBUG=false
@@ -122,7 +129,7 @@ Base URL: `http://localhost:5000/api`
 ## Troubleshooting
 
 - **CORS blocked**: frontend should run on `http://localhost:3000`. If you use a different origin, set `CLIENT_URL` and restart the backend.
-- **OTP fails**: ensure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` are set. (Gmail typically needs an App Password.)
+- **OTP fails**: ensure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` are set. For Render: avoid port 25; prefer 587 with `SMTP_SECURE=false` (STARTTLS) or 465 with `SMTP_SECURE=true`.
 - **Uploads fail**: ensure Cloudinary env vars are correct. “Invalid Signature” usually means the API secret is wrong.
 
 FormData:

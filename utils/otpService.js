@@ -1,5 +1,47 @@
 import nodemailer from 'nodemailer';
 
+const asPositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const toPublicSmtpErrorMessage = (err) => {
+  const code = err?.code;
+  const responseCode = err?.responseCode;
+  const command = err?.command;
+  const message = String(err?.message || '');
+
+  // Auth failures
+  if (code === 'EAUTH' || responseCode === 535 || /auth|login|password|username/i.test(message)) {
+    return 'SMTP authentication failed. Verify SMTP_USER/SMTP_PASS (Gmail requires an App Password) and redeploy.';
+  }
+
+  // DNS / host issues
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || /getaddrinfo/i.test(message)) {
+    return 'SMTP host could not be resolved. Check SMTP_HOST and redeploy.';
+  }
+
+  // Timeouts / connection issues (common on PaaS if using blocked ports like 25)
+  if (
+    code === 'ETIMEDOUT' ||
+    code === 'ESOCKET' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'EHOSTUNREACH' ||
+    command === 'CONN' ||
+    /timeout/i.test(message)
+  ) {
+    return 'Email service connection timed out. On Render, avoid SMTP port 25; prefer 587 (STARTTLS) or 465 (SSL). Verify SMTP_HOST/SMTP_PORT/SMTP_SECURE and that your email provider allows SMTP from cloud hosts.';
+  }
+
+  // TLS / certificates
+  if (/tls|ssl|certificate|handshake/i.test(message)) {
+    return 'SMTP TLS/SSL negotiation failed. Verify SMTP_PORT + SMTP_SECURE (587 => false, 465 => true) and your provider TLS settings.';
+  }
+
+  return 'Failed to send OTP email due to an email service error. Please verify SMTP settings and try again.';
+};
+
 // Generate random 6-digit OTP
 export const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -36,6 +78,10 @@ const getTransporter = () => {
       user: SMTP_USER,
       pass: normalizedPass
     },
+    // Fail fast rather than hanging on network blocks/firewalls.
+    connectionTimeout: asPositiveInt(process.env.SMTP_CONNECTION_TIMEOUT_MS, 15000),
+    greetingTimeout: asPositiveInt(process.env.SMTP_GREETING_TIMEOUT_MS, 15000),
+    socketTimeout: asPositiveInt(process.env.SMTP_SOCKET_TIMEOUT_MS, 20000),
     // Set SMTP_DEBUG=true if you want full nodemailer SMTP logs
     ...(process.env.SMTP_DEBUG === 'true' ? { logger: true, debug: true } : {})
   });
@@ -82,9 +128,25 @@ export const sendOTP = async (phone, email, otp) => {
     `
   };
 
-  console.log(`[OTP] Sending OTP email to: ${toEmail} (phone: ${phone || 'N/A'}) | OTP: ${otp}`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[OTP] Sending OTP email to: ${toEmail} (phone: ${phone || 'N/A'}) | OTP: ${otp}`);
+  } else {
+    console.log(`[OTP] Sending OTP email to: ${toEmail} (phone: ${phone || 'N/A'})`);
+  }
 
-  const info = await transporter.sendMail(mailOptions);
+  let info;
+  try {
+    info = await transporter.sendMail(mailOptions);
+  } catch (err) {
+    // Log the internal error for server-side debugging.
+    console.error('[OTP] Email send failed:', {
+      code: err?.code,
+      command: err?.command,
+      responseCode: err?.responseCode,
+      message: err?.message
+    });
+    throw new Error(toPublicSmtpErrorMessage(err));
+  }
 
   console.log('[OTP] Email send result:', {
     to: toEmail,
